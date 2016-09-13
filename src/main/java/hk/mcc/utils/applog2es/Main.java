@@ -17,12 +17,16 @@ import java.util.Date;
 import java.util.List;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import org.apache.commons.lang3.StringUtils;
+import org.elasticsearch.action.admin.indices.mapping.put.PutMappingResponse;
 import org.elasticsearch.action.bulk.BulkRequestBuilder;
 import org.elasticsearch.action.bulk.BulkResponse;
 import org.elasticsearch.client.Client;
 import org.elasticsearch.client.transport.TransportClient;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.transport.InetSocketTransportAddress;
+import org.elasticsearch.common.xcontent.XContentBuilder;
+import org.elasticsearch.common.xcontent.XContentBuilder.FieldCaseConversion;
 import static org.elasticsearch.common.xcontent.XContentFactory.jsonBuilder;
 import org.joda.time.format.DateTimeFormatter;
 import org.joda.time.format.ISODateTimeFormat;
@@ -37,7 +41,7 @@ public class Main {
      * @param args the command line arguments
      */
     public static void main(String[] args) throws Exception {
-        String pathString = "G:\\tmp\\homework\\2016-03-04\\CSPOL002\\CSPOL002_log_2016-03-04-043058_WC_DTS1";
+        String pathString = "G:\\tmp\\Archive20160902";
         Path path = Paths.get(pathString);
         try (DirectoryStream<Path> stream = Files.newDirectoryStream(path, "app*.log")) {
             for (Path entry : stream) {
@@ -67,12 +71,65 @@ public class Main {
                     .put("cluster.name", "my-application").build();
             //Add transport addresses and do something with the client...
             Client client = TransportClient.builder().settings(settings).build()
-                    .addTransportAddress(new InetSocketTransportAddress(InetAddress.getByName("192.168.56.104"), 9300));
+                    .addTransportAddress(new InetSocketTransportAddress(InetAddress.getByName("127.0.0.1"), 9300));
+            
+            XContentBuilder mapping = jsonBuilder()
+                              .startObject()
+                                   .startObject("applog")
+                                        .startObject("properties")
+                                             .startObject("Url")
+                                                .field("type","string")
+                                                .field("index", "not_analyzed")
+                                             .endObject()
+                                             .startObject("Event")
+                                                .field("type","string")
+                                                .field("index", "not_analyzed")
+                                             .endObject()
+                                            .startObject("ClassName")
+                                                .field("type","string")
+                                                .field("index", "not_analyzed")
+                                             .endObject()
+                                            .startObject("UserId")
+                                                .field("type","string")
+                                                .field("index", "not_analyzed")
+                                             .endObject()
+                                            .startObject("Application")
+                                                .field("type","string")
+                                                .field("index", "not_analyzed")
+                                             .endObject()
+                                            .startObject("ecid")
+                                                .field("type","string")
+                                                .field("index", "not_analyzed")
+                                             .endObject()
+                                        .endObject()
+                                    .endObject()
+                                 .endObject();
+
+            PutMappingResponse putMappingResponse = client.admin().indices()
+                .preparePutMapping("applog")
+                .setType("applog")
+                .setSource(mapping)
+                .execute().actionGet();
             BulkRequestBuilder bulkRequest = client.prepareBulk();
             for (AppLog appLog : appLogs) {
                 // either use client#prepare, or use Requests# to directly build index/delete requests
                 if (appLog != null) {
-                    bulkRequest.add(client.prepareIndex("applog", "log")
+                    if (StringUtils.contains(appLog.getMessage(),"[CIMS_INFO] Filter Processing time")){
+                        String[] split = StringUtils.split(appLog.getMessage(),",");
+                        int elapsedTime = 0;
+                        String url = "";
+                        String event = "";
+                        for (String token : split) {
+                            if(StringUtils.contains(token, "elapsedTime")){
+                                elapsedTime = Integer.parseInt(StringUtils.substringAfter(token, "="));
+                            } else if(StringUtils.contains(token, "with URL")){
+                                url = StringUtils.substringAfter(token, "=");
+                            } else if(StringUtils.contains(token, "event")){
+                                event = StringUtils.substringAfter(token, "=");
+                            }
+                        }
+                        
+                        bulkRequest.add(client.prepareIndex("applog", "applog")
                             .setSource(jsonBuilder()
                                     .startObject()
                                     .field("className", appLog.getClassName())
@@ -86,8 +143,12 @@ public class Main {
                                     .field("server", appLog.getServer())
                                     .field("tid", appLog.getTid())
                                     .field("userId", appLog.getUserId())
+                                    .field("urls", url)
+                                    .field("elapsedTime", elapsedTime)
+                                    .field("events", event)
                                     .endObject())
-                    );
+                        );
+                    }
                 }
             }
             BulkResponse bulkResponse = bulkRequest.get();
